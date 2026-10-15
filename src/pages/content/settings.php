@@ -208,11 +208,16 @@ if (strstr('white,azure', $display['theme'])) {
         display: none;
         color: #888;
         font-weight: bold;
-        margin-left: 5px;
+        margin-right: 5px;
+        cursor: help;
     }
 
     .abRegexExcluded .abRegexExcludedBadge {
         display: inline;
+    }
+
+    .abRegexExcluded code[data-container] {
+        pointer-events: none;
     }
 
     .caBackupMigrationDiv {
@@ -678,7 +683,7 @@ HTML;
 </style>
 <div style="display: none" id="actualContainerSettings_{$container['Name']}">$realContainerSetting</div>
         <dl data-container-name="{$container['Name']}" class="$regexExcludedClass">
-        <dt class="containerSettingsDt"><img alt="pic" src='$image' height='16' /> <i title='{$container['Image']}' class='fa fa-info-circle'></i> <abbr title='Click for advanced settings'>{$container['Name']}$plexContainerNameSuffix</abbr> <span id="containerMultiMappingIssue_{$container['Name']}" style="display: none; color: darkorange;">WARN: Multi mapping detected!</span> <span class="abRegexExcludedBadge" title="This container matches the container exclusion regex and will NOT be stopped, backed up, updated or started">EXCLUDED BY REGEX</span></dt>
+        <dt class="containerSettingsDt"><span class="abRegexExcludedBadge" title="Excluded by regex: this container matches the container exclusion regex and will NOT be stopped, backed up, updated or started"><i class="fa fa-ban"></i> EXCLUDED</span><img alt="pic" src='$image' height='16' /> <i title='{$container['Image']}' class='fa fa-info-circle'></i> <abbr title='Click for advanced settings'>{$container['Name']}$plexContainerNameSuffix</abbr> <span id="containerMultiMappingIssue_{$container['Name']}" style="display: none; color: darkorange;">WARN: Multi mapping detected!</span></dt>
         <dd><label for="{$container['Name']}_skip">&nbsp;&nbsp;Skip?</label>
         <select name="containerSettings[{$container['Name']}][skip]" id="{$container['Name']}_skip" data-setting="{$containerSetting['skip']}">
             <option value="no">No</option>
@@ -1026,6 +1031,8 @@ HTML;
 
     $('#abSettingsForm').on('submit', function () {
         console.debug("SUBMIT!");
+        // Fields of regex excluded containers are disabled only for display: disabled fields are not posted and their settings would get lost
+        $('.abRegexDisabled').prop('disabled', false);
         let mainValue = $('#containerOrderSortable').sortable('serialize', {
             expression: /(.+?)_(.+)/
         });
@@ -1205,12 +1212,21 @@ HTML;
                 // Same as during backup: an invalid regex excludes nothing
                 $error.text('Invalid regex: ' + e.message).show();
                 $containers.removeClass('abRegexExcluded');
+                $('.abRegexDisabled').prop('disabled', false).removeClass('abRegexDisabled');
                 return;
             }
         }
 
         $containers.each(function () {
-            $(this).toggleClass('abRegexExcluded', regex !== null && regex.test($(this).attr('data-container-name')));
+            let excluded = regex !== null && regex.test($(this).attr('data-container-name'));
+            $(this).toggleClass('abRegexExcluded', excluded);
+
+            // Disable the settings fields (not the start order entries: the order must stay sortable)
+            if (excluded) {
+                $(this).find('input, select, textarea, button').not(':disabled').prop('disabled', true).addClass('abRegexDisabled');
+            } else {
+                $(this).find('.abRegexDisabled').prop('disabled', false).removeClass('abRegexDisabled');
+            }
         });
     }
 
