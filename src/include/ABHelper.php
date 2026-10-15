@@ -19,6 +19,11 @@ class ABHelper {
      */
     private static $skipStartContainers = [];
 
+    /**
+     * @var array Containers, which exclusion by the container exclusion regex was already logged (sortContainers is called multiple times per run)
+     */
+    private static array $regexExcludedContainersLogged = [];
+
     private static $emojiLevels = [
         self::LOGLEVEL_INFO => 'ℹ️',
         self::LOGLEVEL_WARN => '⚠️',
@@ -314,6 +319,21 @@ class ABHelper {
                 ];
             }
             $_containers = $_containers + $appendinggroups;
+        }
+
+        /**
+         * Remove every container matching the container exclusion regex - including the ones not (yet) present in $order. Groups are not checked here, their members are filtered while resolving the group
+         */
+        if ($removeSkipped && $abSettings->getContainerExclusionPattern() !== null) {
+            foreach ($_containers as $name => $container) {
+                if (!$container['isGroup'] && $abSettings->isContainerExcludedByRegex($name)) {
+                    if (!in_array($name, self::$regexExcludedContainersLogged)) {
+                        self::backupLog("Container '$name' is excluded by the container exclusion regex '{$abSettings->containerExclusionRegex}'");
+                        self::$regexExcludedContainersLogged[] = $name;
+                    }
+                    unset($_containers[$name]);
+                }
+            }
         }
 
         $sortedContainers = [];

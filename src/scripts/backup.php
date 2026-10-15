@@ -71,6 +71,13 @@ if (!file_exists($abSettings->destination) || !is_writable($abSettings->destinat
 
 ABHelper::backupLog("Backing up from: " . implode(', ', $abSettings->allowedSources));
 
+if ($abSettings->containerExclusionRegex !== '') {
+    ABHelper::backupLog("Container exclusion regex: " . $abSettings->containerExclusionRegex);
+    if (!ABSettings::isValidContainerExclusionRegex($abSettings->containerExclusionRegex)) {
+        ABHelper::backupLog("The container exclusion regex is invalid and will be ignored! No container will be excluded by it.", ABHelper::LOGLEVEL_WARN);
+    }
+}
+
 /**
  * At this point, we have something to work with.
  * Patch the destination for further usage
@@ -138,7 +145,7 @@ foreach ($dockerContainers as $container) { // Use unraids docker container list
      */
     ABHelper::backupLog($container['Name'] . " specific settings: " . print_r($containerSettings, true), ABHelper::LOGLEVEL_DEBUG);
 
-    if ($containerSettings['skip'] == 'no' && $containerSettings['updateContainer'] == 'yes') {
+    if ($containerSettings['skip'] == 'no' && !$abSettings->isContainerExcludedByRegex($container['Name']) && $containerSettings['updateContainer'] == 'yes') {
 
         if (!isset($allInfo)) {
             ABHelper::backupLog("Requesting docker template meta...", ABHelper::LOGLEVEL_DEBUG);

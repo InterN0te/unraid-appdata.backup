@@ -80,6 +80,7 @@ class ABSettings {
     public string $successLogWanted = 'no';
     public string $updateLogWanted = 'no';
     public string $ignoreExclusionCase = 'no';
+    public string $containerExclusionRegex = '';
 
     public function __construct() {
 
@@ -275,6 +276,52 @@ class ABSettings {
             return $groups[$filter];
         }
         return $groups;
+    }
+
+    /**
+     * Builds the full PCRE pattern out of the container exclusion regex (entered without delimiters)
+     * @return string|null the pattern or null if the regex is empty or invalid
+     */
+    public function getContainerExclusionPattern(): ?string {
+        if ($this->containerExclusionRegex === '' || !self::isValidContainerExclusionRegex($this->containerExclusionRegex)) {
+            return null;
+        }
+        return self::buildContainerExclusionPattern($this->containerExclusionRegex);
+    }
+
+    /**
+     * Checks, if the given container exclusion regex (without delimiters) is a valid PCRE pattern
+     * @param string $regex
+     * @return bool
+     */
+    public static function isValidContainerExclusionRegex(string $regex): bool {
+        // An invalid pattern raises a warning. The custom error handler of the backup script is called even with @, so silence it temporarily
+        set_error_handler(fn() => true);
+        $valid = @preg_match(self::buildContainerExclusionPattern($regex), '') !== false;
+        restore_error_handler();
+        return $valid;
+    }
+
+    /**
+     * Checks, if a container should be ignored because its name matches the container exclusion regex
+     * @param string $name container name
+     * @return bool
+     */
+    public function isContainerExcludedByRegex(string $name): bool {
+        $pattern = $this->getContainerExclusionPattern();
+        if ($pattern === null) {
+            return false;
+        }
+        return preg_match($pattern, $name) === 1; // The pattern is already validated, no warning possible
+    }
+
+    /**
+     * Wraps the regex with the delimiter ~ (any ~ inside the regex gets escaped)
+     * @param string $regex
+     * @return string
+     */
+    private static function buildContainerExclusionPattern(string $regex): string {
+        return '~' . preg_replace('/(?<!\\\\)((?:\\\\\\\\)*)~/', '$1\\\\~', $regex) . '~';
     }
 
     /**
