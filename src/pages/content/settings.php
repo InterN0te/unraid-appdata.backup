@@ -140,6 +140,9 @@ $abSettings = new ABSettings();
 
 if ($_POST) {
     list($code, $out) = $abSettings->checkCron();
+
+    // The regex stays saved, so the user is able to correct it
+    $containerExclusionRegexInvalid = $abSettings->containerExclusionRegex !== '' && !ABSettings::isValidContainerExclusionRegex($abSettings->containerExclusionRegex);
 }
 
 
@@ -196,6 +199,22 @@ if (strstr('white,azure', $display['theme'])) {
         margin: 0 15px 15px 15px;
     }
 
+    .abRegexExcluded {
+        opacity: 0.45;
+        filter: grayscale(100%);
+    }
+
+    .abRegexExcludedBadge {
+        display: none;
+        color: #888;
+        font-weight: bold;
+        margin-left: 5px;
+    }
+
+    .abRegexExcluded .abRegexExcludedBadge {
+        display: inline;
+    }
+
     .caBackupMigrationDiv {
         border: 1px solid red;
         border-radius: 25px;
@@ -241,6 +260,10 @@ HTML;
 
 if (($code ?? 0) != 0) {
     echo "<h1>Cron error!</h1><p>" . implode('; ', $out) . "</p>";
+}
+
+if ($containerExclusionRegexInvalid ?? false) {
+    echo "<h1 style='color: red;'>Container exclusion regex error!</h1><p style='color: red;'>The container exclusion regex is invalid and will be ignored during backup</p>";
 }
 ?>
 
@@ -564,6 +587,31 @@ if (($code ?? 0) != 0) {
         </dd>
     </dl>
 
+    <dl>
+        <dt><b>Exclude containers by name (regex)</b></dt>
+        <dd><input type="text" id="containerExclusionRegex" name="containerExclusionRegex" style="width: 400px;"
+                   placeholder="e.g. ^(test|dev)-"
+                   value="<?= htmlspecialchars($abSettings->containerExclusionRegex) ?>"/>
+            <span id="containerExclusionRegexError" style="color: red; display: none;"></span></dd>
+    </dl>
+    <blockquote class='inline_help'>
+        <p>Every container whose name matches this regular expression is ignored during backup: it will NOT be stopped,
+            backed up, updated or started - exactly like a container with <code>Skip? = Yes</code>. This has priority
+            over the per container settings.</p>
+        <p>Enter a PCRE pattern <b>without</b> delimiters. The pattern matches any part of the container name, use
+            <code>^</code> and <code>$</code> to anchor it. The match is case-sensitive, start the pattern with
+            <code>(?i)</code> to ignore the case.</p>
+        <p>Examples:</p>
+        <ul>
+            <li><code>^test-</code> - all containers starting with "test-"</li>
+            <li><code>-(dev|staging)$</code> - all containers ending with "-dev" or "-staging"</li>
+            <li><code>(?i)^tmp</code> - all containers starting with "tmp", "TMP", "Tmp", ...</li>
+        </ul>
+        <p>Matching containers are greyed out below. This preview is only indicative (JavaScript and PCRE regex differ
+            in some details), the reference is the display after saving. An invalid regex is ignored during backup (no
+            container gets excluded). Leave empty to disable.</p>
+    </blockquote>
+
     <div style="display: flex;">
         <div class="dockerSettings" style="flex-grow: 1; flex-basis: 0;">
             <div class="title"><span class="left"><i class="fa fa-docker title"></i>Per container settings. <b>Click on container name to open</b></span>
@@ -613,6 +661,10 @@ HTML;
 
                 $containerExcludes = implode("\r\n", $containerSetting['exclude']);
 
+                // Only visual: the fields must NOT be disabled, otherwise they would not be posted and their settings would get lost
+                $excludedByRegex    = $abSettings->isContainerExcludedByRegex($container['Name']);
+                $regexExcludedClass = $excludedByRegex ? 'abRegexExcluded' : '';
+
                 echo <<<HTML
 <style>
 .containerSettingsDt {
@@ -625,8 +677,8 @@ HTML;
 }
 </style>
 <div style="display: none" id="actualContainerSettings_{$container['Name']}">$realContainerSetting</div>
-        <dl>
-        <dt class="containerSettingsDt"><img alt="pic" src='$image' height='16' /> <i title='{$container['Image']}' class='fa fa-info-circle'></i> <abbr title='Click for advanced settings'>{$container['Name']}$plexContainerNameSuffix</abbr> <span id="containerMultiMappingIssue_{$container['Name']}" style="display: none; color: darkorange;">WARN: Multi mapping detected!</span></dt>
+        <dl data-container-name="{$container['Name']}" class="$regexExcludedClass">
+        <dt class="containerSettingsDt"><img alt="pic" src='$image' height='16' /> <i title='{$container['Image']}' class='fa fa-info-circle'></i> <abbr title='Click for advanced settings'>{$container['Name']}$plexContainerNameSuffix</abbr> <span id="containerMultiMappingIssue_{$container['Name']}" style="display: none; color: darkorange;">WARN: Multi mapping detected!</span> <span class="abRegexExcludedBadge" title="This container matches the container exclusion regex and will NOT be stopped, backed up, updated or started">EXCLUDED BY REGEX</span></dt>
         <dd><label for="{$container['Name']}_skip">&nbsp;&nbsp;Skip?</label>
         <select name="containerSettings[{$container['Name']}][skip]" id="{$container['Name']}_skip" data-setting="{$containerSetting['skip']}">
             <option value="no">No</option>
@@ -635,7 +687,7 @@ HTML;
     </dd>
         </dl>
 
-<blockquote class='inline_help'>
+<blockquote class='inline_help $regexExcludedClass' data-container-name="{$container['Name']}">
 <dl>
 $plexHint
 <dt>Configured volumes <small>- (Click to exclude)</small><br /><small><abbr style="cursor:help;" title="For info, open the 'Appdata source(s)' help"><i class="fa fa-folder"></i> Internal volume | <i class="fa fa-external-link"></i> External volume</abbr></small></dt>
@@ -719,8 +771,10 @@ HTML;
                     $internalName = $isGroup ? '__grp__' . $name : $name;
                     $image        = (empty($container['Icon']) ? '/plugins/dynamix.docker.manager/images/question.png' : $container['Icon']);
                     $imageHtml    = $isGroup ? '<i class="fa fa-folder" style="padding-right: 10px;"></i>' : '<img src="' . $image . '" height="16" />';
+                    // Groups are never excluded by the regex - only their members
+                    $regexAttributes = $isGroup ? '' : 'data-container-name="' . $name . '"' . ($abSettings->isContainerExcludedByRegex($name) ? ' class="abRegexExcluded"' : '');
                     echo <<<HTML
-<li id="containerOrder_{$internalName}"><i class="fa fa-sort"></i> $imageHtml $name</li>
+<li id="containerOrder_{$internalName}" $regexAttributes><i class="fa fa-sort"></i> $imageHtml $name</li>
 HTML;
 
                 }
@@ -739,9 +793,10 @@ HTML;
                     <?php
                     $sortedContainers = ABHelper::sortContainers($allContainers, $abSettings->containerGroupOrder[$group] ?? [], false, false, $members);
                     foreach ($sortedContainers as $container) {
-                        $image = empty($container['Icon']) ? '/plugins/dynamix.docker.manager/images/question.png' : $container['Icon'];
+                        $image              = empty($container['Icon']) ? '/plugins/dynamix.docker.manager/images/question.png' : $container['Icon'];
+                        $regexExcludedClass = $abSettings->isContainerExcludedByRegex($container['Name']) ? 'abRegexExcluded' : '';
                         echo <<<HTML
-<li id="containerGroupOrder[{$group}]={$container['Name']}"><i class="fa fa-sort"></i> <img src="$image" height="16" /> {$container['Name']}</li>
+<li id="containerGroupOrder[{$group}]={$container['Name']}" data-container-name="{$container['Name']}" class="$regexExcludedClass"><i class="fa fa-sort"></i> <img src="$image" height="16" /> {$container['Name']}</li>
 HTML;
 
                     }
@@ -958,6 +1013,13 @@ HTML;
         checkFlashBackupCopy();
         checkMultiCoreCpuCount();
         checkVolumesForDuplicates();
+        applyContainerExclusionRegex();
+
+        let containerExclusionRegexTimeout = null;
+        $('#containerExclusionRegex').on('input', function () {
+            clearTimeout(containerExclusionRegexTimeout);
+            containerExclusionRegexTimeout = setTimeout(applyContainerExclusionRegex, 250);
+        });
 
 
     });
@@ -1117,6 +1179,38 @@ HTML;
                     console.error("MultiWarnSpan not found!");
                 }
             });
+        });
+    }
+
+    /**
+     * Live preview of the container exclusion regex: grey out every matching container (only indicative, PCRE and JS regex differ in some details)
+     */
+    function applyContainerExclusionRegex() {
+        let pattern = $('#containerExclusionRegex').val();
+        let $error = $('#containerExclusionRegexError');
+        let $containers = $('[data-container-name]');
+        let regex = null;
+
+        $error.hide().text('');
+
+        if (pattern !== '') {
+            let flags = '';
+            if (pattern.startsWith('(?i)')) {
+                pattern = pattern.substring(4);
+                flags = 'i';
+            }
+            try {
+                regex = new RegExp(pattern, flags);
+            } catch (e) {
+                // Same as during backup: an invalid regex excludes nothing
+                $error.text('Invalid regex: ' + e.message).show();
+                $containers.removeClass('abRegexExcluded');
+                return;
+            }
+        }
+
+        $containers.each(function () {
+            $(this).toggleClass('abRegexExcluded', regex !== null && regex.test($(this).attr('data-container-name')));
         });
     }
 
